@@ -4,7 +4,7 @@ import time
 import sqlite3
 from datetime import datetime, timedelta
 
-API_URL = "http://127.0.0.1:8000/api/reviews"
+API_URL = "http://127.0.0.1:10000/api/reviews"
 DB_PATH = "reputation.db"
 
 REVIEWS_POOL = {
