@@ -24,6 +24,7 @@ sim_state = {
     "total_reviews": 12,
     "error": None,
     "live_start_time": None,
+    "stop_requested": False,
 }
 simulation_thread = None
 
@@ -170,6 +171,10 @@ def get_restaurants(db: sqlite3.Connection = Depends(get_db)):
 @app.post("/api/reset")
 def reset_database(db: sqlite3.Connection = Depends(get_db)):
     """Wipes all review data so a new visitor gets a fresh demo."""
+    global simulation_thread
+    if simulation_thread and simulation_thread.is_alive():
+        sim_state["stop_requested"] = True
+        simulation_thread.join(timeout=5)
     cursor = db.cursor()
     cursor.execute("DELETE FROM reviews")
     cursor.execute("DELETE FROM sqlite_sequence WHERE name = 'reviews'")
@@ -196,7 +201,8 @@ def start_simulation():
     global simulation_thread, sim_state
 
     if simulation_thread and simulation_thread.is_alive():
-        return {"status": "already_running"}
+        sim_state["stop_requested"] = True
+        simulation_thread.join(timeout=5)
 
     # Reset state before launch
     sim_state.update({
@@ -205,6 +211,7 @@ def start_simulation():
         "reviews_sent": 0,
         "error": None,
         "live_start_time": None,
+        "stop_requested": False,
     })
 
     from simulate import run_combined_simulation

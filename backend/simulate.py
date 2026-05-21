@@ -151,6 +151,7 @@ def run_enterprise_seed(target_restaurants, state):
         for rest_id in target_restaurants:
             for weeks_ago in [4, 3, 2, 1]:
                 for _ in range(8):
+                    if state.get("stop_requested"): return
                     sentiment_category = random.choices(["positive", "neutral", "negative"], weights=[35, 20, 45], k=1)[0]
                     review_data = random.choice(REVIEWS_POOL[sentiment_category])
                     
@@ -208,6 +209,9 @@ def run_combined_simulation(state):
             # session.proxies = {"http": None, "https": None}
             session.trust_env = False
             for i in range(12):
+                # stop if requested (page refresh, new simulation, etc.)
+                if state.get("stop_requested"):
+                    break
                 # Hard timeout: abort if total wall-clock time is exceeded
                 if time.time() - wall_start > MAX_RUNTIME:
                     break
