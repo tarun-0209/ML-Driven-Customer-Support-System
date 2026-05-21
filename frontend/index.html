@@ -11,11 +11,16 @@
         ::-webkit-scrollbar { width: 6px; }
         ::-webkit-scrollbar-track { background: #f1f1f1; }
         ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
-        .ticket-exit {
+        .ticket-card {
             transition: opacity .3s ease, transform .3s ease, max-height .4s ease, margin .4s ease, padding .4s ease;
-            opacity: 0; transform: translateX(-20px) scale(0.95);
-            max-height: 0 !important; margin-bottom: -100px;
-            padding: 0 !important; overflow: hidden; border: none !important;
+            max-height: 500px;
+            opacity: 1; transform: translateX(0) scale(1);
+            overflow: hidden;
+        }
+        .ticket-exit {
+            opacity: 0 !important; transform: translateX(-20px) scale(0.95) !important;
+            max-height: 0 !important; margin-bottom: 0 !important; margin-top: 0 !important;
+            padding-top: 0 !important; padding-bottom: 0 !important; border-width: 0 !important;
         }
         .dd-item { display:block; width:100%; text-align:left; padding:.7rem 1rem; font-size:.7rem; font-weight:700; text-transform:uppercase; letter-spacing:.05em; color:#4b5563; transition:background .15s; }
         .dd-item:hover { background:#f9fafb; }
@@ -132,7 +137,7 @@
     function formatTimestamp(ts) {
         if (!ts || ts === 'Just now') return ts || '';
         try {
-            const d = new Date(ts.replace(' ', 'T'));
+            const d = new Date(ts.replace(' ', 'T') + 'Z');
             if (isNaN(d)) return ts;
             const now = new Date();
             const diffMs = now - d;
@@ -261,7 +266,7 @@
             : `<span class="flex-shrink-0 ml-4 text-[10px] font-semibold text-gray-400 bg-gray-100 border border-gray-200 px-2 py-1 rounded whitespace-nowrap">${formatTimestamp(t.resolved_at)}</span>`;
 
         return `
-            <div id="ticket-${t.review_id}" class="p-5 bg-white border-b border-gray-100 hover:bg-slate-50 transition-colors">
+            <div id="ticket-${t.review_id}" class="ticket-card p-5 bg-white border-b border-gray-100 hover:bg-slate-50 transition-colors">
                 ${badge}
                 <div class="flex items-start justify-between">
                     <div class="min-w-0 flex-grow pr-4">
@@ -285,8 +290,8 @@
             const tix = allTickets
                 .filter(t => t.ticket_status === 'Resolved')
                 .sort((a, b) => {
-                    const ta = a.resolved_at === 'Just now' ? Date.now() : new Date(a.resolved_at.replace(' ', 'T'));
-                    const tb = b.resolved_at === 'Just now' ? Date.now() : new Date(b.resolved_at.replace(' ', 'T'));
+                    const ta = a.resolved_at === 'Just now' ? Date.now() : new Date(a.resolved_at.replace(' ', 'T') + 'Z');
+                    const tb = b.resolved_at === 'Just now' ? Date.now() : new Date(b.resolved_at.replace(' ', 'T') + 'Z');
                     return tb - ta;
                 });
             el.innerHTML = colHeader('Resolved Issues', tix.length)
@@ -298,9 +303,9 @@
 
         const open      = allTickets.filter(t => t.ticket_status === 'Open');
         const anomalies = open.filter(isAnomaly)
-                              .sort((a, b) => new Date(b.review_timestamp.replace(' ', 'T')) - new Date(a.review_timestamp.replace(' ', 'T')));
+                              .sort((a, b) => new Date(b.review_timestamp.replace(' ', 'T') + 'Z') - new Date(a.review_timestamp.replace(' ', 'T') + 'Z'));
         const standard  = open.filter(t => !isAnomaly(t))
-                              .sort((a, b) => new Date(b.review_timestamp.replace(' ', 'T')) - new Date(a.review_timestamp.replace(' ', 'T')));
+                              .sort((a, b) => new Date(b.review_timestamp.replace(' ', 'T') + 'Z') - new Date(a.review_timestamp.replace(' ', 'T') + 'Z'));
 
         if (!open.length) {
             el.innerHTML = `<div class="flex flex-col items-center justify-center py-20 text-center">

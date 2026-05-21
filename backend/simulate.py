@@ -103,28 +103,6 @@ REVIEWS_POOL = {
 
 # --- DATABASE HELPERS ---
 
-def resolve_historical_tickets():
-    print(" Backdating 'Time to Resolution' for historical tickets...")
-    with sqlite3.connect(DB_PATH, timeout=10) as conn:
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-        cursor.execute("SELECT review_id, review_timestamp FROM reviews WHERE ticket_status = 'Open'")
-        open_tickets = cursor.fetchall()
-        
-        resolved_count = 0
-        for ticket in open_tickets:
-            if random.random() < 0.75: # 75% auto-resolve rate
-                t1 = datetime.strptime(ticket["review_timestamp"], "%Y-%m-%d %H:%M:%S")
-                resolution_time = t1 + timedelta(hours=random.randint(1, 14), minutes=random.randint(0, 59))
-                
-                cursor.execute(
-                    "UPDATE reviews SET ticket_status = 'Resolved', resolved_at = ? WHERE review_id = ?", 
-                    (resolution_time.strftime("%Y-%m-%d %H:%M:%S"), ticket["review_id"])
-                )
-                resolved_count += 1
-                
-        print(f" Realistically resolved {resolved_count} out of {len(open_tickets)} historical issues.\n")
-
 # --- SIMULATION HELPERS ---
 def generate_random_time_in_week(weeks_ago):
     start_of_week = datetime.now() - timedelta(days=(weeks_ago * 7))
@@ -144,7 +122,7 @@ def run_enterprise_seed(target_restaurants, state):
     total_sent = 0
     
     # Using a Session makes 180 sequential API calls significantly faster
-    with requests.Session() as session:
+    with requests.Session() as session, sqlite3.connect(DB_PATH, timeout=10) as conn:
         # session.proxies = {"http": None, "https": None}
         session.trust_env = False
         
@@ -167,6 +145,18 @@ def run_enterprise_seed(target_restaurants, state):
                         if res.status_code == 200:
                             total_sent += 1
                             state["reviews_sent"] = total_sent
+                            
+                            data = res.json()
+                            # Optimistically resolve some of the historical tickets right away
+                            if data.get("ticket") == "Open" and random.random() < 0.75:
+                                t1 = datetime.strptime(payload["review_timestamp"], "%Y-%m-%d %H:%M:%S")
+                                resolution_time = t1 + timedelta(hours=random.randint(1, 14), minutes=random.randint(0, 59))
+                                conn.execute(
+                                    "UPDATE reviews SET ticket_status = 'Resolved', resolved_at = ? WHERE review_id = ?", 
+                                    (resolution_time.strftime("%Y-%m-%d %H:%M:%S"), data["review_id"])
+                                )
+                                conn.commit()
+
                             if total_sent % 30 == 0:
                                 print(f"   ... Processed {total_sent}/{total_expected} reviews")
                         else:
@@ -175,7 +165,6 @@ def run_enterprise_seed(target_restaurants, state):
                         print(f" API Error: {e}")
                     
     print("ML Ingestion Complete!")
-    resolve_historical_tickets()
 
 # --- COMBINED SIMULATION SERVICE ---
 def run_combined_simulation(state):
@@ -209,7 +198,7 @@ def run_combined_simulation(state):
             # session.proxies = {"http": None, "https": None}
             session.trust_env = False
             for i in range(12):
-                # stop if requested (page refresh, new simulation, etc.)
+                # Stop if requested (page refresh, new simulation, etc.)
                 if state.get("stop_requested"):
                     break
                 # Hard timeout: abort if total wall-clock time is exceeded
