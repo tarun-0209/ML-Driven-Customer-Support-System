@@ -44,7 +44,7 @@
     <header class="flex items-center justify-between mb-8 pb-4 border-b border-gray-200">
         <h1 class="text-2xl font-extrabold text-gray-900 tracking-tight">Sentiment Dashboard</h1>
         <div class="flex items-center gap-4">
-            <button id="sim-btn" onclick="startSimulation()"
+            <button id="sim-btn" onclick="startSimulation()" disabled
                 class="flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white text-xs font-bold uppercase tracking-wide px-4 py-2 rounded-lg shadow-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed">
                 <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
                 Simulate Reviews
@@ -127,6 +127,22 @@
     function qs() {
         const v = $('store-filter').value;
         return v !== 'all' ? `?restaurant_id=${v}` : '';
+    }
+
+    function formatTimestamp(ts) {
+        if (!ts || ts === 'Just now') return ts || '';
+        try {
+            const d = new Date(ts.replace(' ', 'T'));
+            if (isNaN(d)) return ts;
+            const now = new Date();
+            const diffMs = now - d;
+            const diffMin = Math.floor(diffMs / 60000);
+            if (diffMin < 1) return 'Just now';
+            if (diffMin < 60) return `${diffMin}m ago`;
+            const diffHrs = Math.floor(diffMin / 60);
+            if (diffHrs < 24) return `${diffHrs}h ago`;
+            return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+        } catch (e) { return ts; }
     }
 
     function animateCounter(id, from, to, ms = 1200) {
@@ -242,7 +258,7 @@
             ? `<button onclick="openDropdown(this,${t.review_id})" class="action-btn flex-shrink-0 ml-4 flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wide bg-white border border-gray-300 text-gray-600 hover:border-blue-400 hover:text-blue-600 hover:bg-blue-50 px-3 py-1.5 rounded-lg shadow-sm transition-all whitespace-nowrap">
                     Action <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
                </button>`
-            : `<span class="flex-shrink-0 ml-4 text-[10px] font-semibold text-gray-400 bg-gray-100 border border-gray-200 px-2 py-1 rounded whitespace-nowrap">${t.resolved_at}</span>`;
+            : `<span class="flex-shrink-0 ml-4 text-[10px] font-semibold text-gray-400 bg-gray-100 border border-gray-200 px-2 py-1 rounded whitespace-nowrap">${formatTimestamp(t.resolved_at)}</span>`;
 
         return `
             <div id="ticket-${t.review_id}" class="p-5 bg-white border-b border-gray-100 hover:bg-slate-50 transition-colors">
@@ -269,8 +285,8 @@
             const tix = allTickets
                 .filter(t => t.ticket_status === 'Resolved')
                 .sort((a, b) => {
-                    const ta = a.resolved_at === 'Just now' ? Date.now() : new Date(a.resolved_at);
-                    const tb = b.resolved_at === 'Just now' ? Date.now() : new Date(b.resolved_at);
+                    const ta = a.resolved_at === 'Just now' ? Date.now() : new Date(a.resolved_at.replace(' ', 'T'));
+                    const tb = b.resolved_at === 'Just now' ? Date.now() : new Date(b.resolved_at.replace(' ', 'T'));
                     return tb - ta;
                 });
             el.innerHTML = colHeader('Resolved Issues', tix.length)
@@ -281,19 +297,23 @@
         }
 
         const open      = allTickets.filter(t => t.ticket_status === 'Open');
-        const anomalies = open.filter(isAnomaly);
+        const anomalies = open.filter(isAnomaly)
+                              .sort((a, b) => new Date(b.review_timestamp.replace(' ', 'T')) - new Date(a.review_timestamp.replace(' ', 'T')));
         const standard  = open.filter(t => !isAnomaly(t))
-                              .sort((a, b) => a.predicted_sentiment === 'negative' ? -1 : 1);
+                              .sort((a, b) => new Date(b.review_timestamp.replace(' ', 'T')) - new Date(a.review_timestamp.replace(' ', 'T')));
 
         if (!open.length) {
             el.innerHTML = `<div class="flex flex-col items-center justify-center py-20 text-center">
-                <p class="text-2xl font-bold text-gray-800 mb-1">Inbox Zero</p>
-                <p class="text-sm text-gray-400">All issues cleared.</p>
+                <svg class="w-16 h-16 text-gray-300 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/>
+                </svg>
+                <p class="text-lg font-bold text-gray-800 mb-1">No reviews yet</p>
+                <p class="text-sm text-gray-400">Click <strong>Simulate Reviews</strong> above to start the demo.</p>
             </div>`;
             return;
         }
 
-        const infoText = 'Edge cases where the model\'s predicted sentiment conflicts with the star rating — likely sarcasm or informal language. Useful labelled data for future training cycles.';
+        const infoText = 'Edge cases where the model\'s predicted sentiment conflicts with the star rating \u2014 likely sarcasm or informal language. Useful labelled data for future training cycles.';
 
         el.innerHTML = `
             <div class="grid grid-cols-1 lg:grid-cols-2 divide-x divide-gray-200">
@@ -358,7 +378,7 @@
         try {
             const res = await fetch(`${API}/tickets/${id}/resolve`, { method: 'PATCH' });
             if (!res.ok) throw new Error('Resolve failed');
-            setTimeout(fetchData, 800);
+            fetchData();
         } catch (e) {
             console.error(e);
             fetchData();
@@ -377,9 +397,15 @@
         const btn = $('sim-btn');
         const pill = $('sim-status');
         btn.disabled = true;
-        pill.textContent = 'Starting...';
+        pill.textContent = 'Resetting...';
         pill.className = 'text-xs font-semibold px-3 py-1.5 rounded-full border whitespace-nowrap bg-gray-50 text-gray-500 border-gray-200';
         try {
+            // Wipe old data first so we get a fresh demo
+            await fetch(`${API}/reset`, { method: 'POST' });
+            // Refresh UI to show empty state briefly
+            await fetchData();
+
+            pill.textContent = 'Starting...';
             const res = await fetch(`${API}/simulation/start`, { method: 'POST' });
             const data = await res.json();
             if (data.status === 'already_running') {
@@ -401,13 +427,15 @@
 
             if (data.phase === 'seeding') {
                 btn.disabled = true;
-                pill.textContent = 'Seeding historical data...';
+                pill.textContent = `Seeding ${data.reviews_sent}/${data.total_reviews} reviews...`;
                 pill.className = 'text-xs font-semibold px-3 py-1.5 rounded-full border whitespace-nowrap bg-yellow-50 text-yellow-700 border-yellow-200 animate-pulse';
+                fetchData();
 
             } else if (data.phase === 'live') {
                 btn.disabled = true;
-                pill.textContent = `● Simulating | ${formatCountdown(data.remaining_seconds)}`;
+                pill.textContent = `● Simulating ${data.reviews_sent}/12 | ${formatCountdown(data.remaining_seconds)}`;
                 pill.className = 'text-xs font-semibold px-3 py-1.5 rounded-full border whitespace-nowrap bg-blue-50 text-blue-700 border-blue-200';
+                fetchData();
 
             } else if (data.phase === 'error') {
                 btn.disabled = false;
@@ -444,14 +472,20 @@
                 setTimeout(() => $('startup-overlay').classList.add('hidden'), 500);
                 toast('Server is online and ready!');
                 
+                // Wipe old data so every page load is a fresh start
+                await fetch(`${API}/reset`, { method: 'POST' });
+                
                 // Now that we are safe, load the real data
                 loadRestaurants();
                 fetchData();
                 fetchSimulationStatus();
                 
+                // Enable the simulate button now that server is confirmed awake
+                $('sim-btn').disabled = false;
+                
                 // Start background polling
                 setInterval(fetchData, 10000);
-                setInterval(fetchSimulationStatus, 5000);
+                setInterval(fetchSimulationStatus, 3000);
                 return;
             }
         } catch (e) {

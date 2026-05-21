@@ -102,11 +102,6 @@ REVIEWS_POOL = {
 }
 
 # --- DATABASE HELPERS ---
-def wipe_database():
-    print(" Wiping old database records...")
-    with sqlite3.connect(DB_PATH, timeout=10) as conn:
-        conn.execute("DELETE FROM reviews")
-        conn.execute("UPDATE sqlite_sequence SET seq = 0 WHERE name = 'reviews'")
 
 def resolve_historical_tickets():
     print(" Backdating 'Time to Resolution' for historical tickets...")
@@ -140,11 +135,12 @@ def generate_random_time_in_week(weeks_ago):
     return past_date.replace(hour=hour, minute=minute, second=0).strftime("%Y-%m-%d %H:%M:%S")
 
 # --- CORE EXECUTION ---
-def run_enterprise_seed(target_restaurants):
-    wipe_database()
+def run_enterprise_seed(target_restaurants, state):
     print(f"\n Seeding historical data for Restaurants: {target_restaurants}")
     
     total_expected = len(target_restaurants) * 4 * 8
+    state["total_reviews"] = total_expected
+    state["reviews_sent"] = 0
     total_sent = 0
     
     # Using a Session makes 180 sequential API calls significantly faster
@@ -169,6 +165,7 @@ def run_enterprise_seed(target_restaurants):
                         res = session.post(API_URL, json=payload)
                         if res.status_code == 200:
                             total_sent += 1
+                            state["reviews_sent"] = total_sent
                             if total_sent % 30 == 0:
                                 print(f"   ... Processed {total_sent}/{total_expected} reviews")
                         else:
@@ -199,9 +196,11 @@ def run_combined_simulation(state):
         print(f" Found restaurants: {restaurant_ids}")
 
         # Phase 1 — Historical Seed (phase already set to 'seeding' by main.py)
-        run_enterprise_seed(restaurant_ids)
+        run_enterprise_seed(restaurant_ids, state)
 
         # Phase 2 — Live Stream
+        state["total_reviews"] = 12
+        state["reviews_sent"] = 0
         state["phase"] = "live"
         state["live_start_time"] = time.time()
 

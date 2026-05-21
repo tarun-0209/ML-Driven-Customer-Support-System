@@ -167,15 +167,24 @@ def get_restaurants(db: sqlite3.Connection = Depends(get_db)):
     cursor.execute("SELECT restaurant_id, name, location_tag FROM restaurants ORDER BY restaurant_id")
     return {"restaurants": [dict(row) for row in cursor.fetchall()]}
 
+@app.post("/api/reset")
+def reset_database(db: sqlite3.Connection = Depends(get_db)):
+    """Wipes all review data so a new visitor gets a fresh demo."""
+    cursor = db.cursor()
+    cursor.execute("DELETE FROM reviews")
+    cursor.execute("DELETE FROM sqlite_sequence WHERE name = 'reviews'")
+    db.commit()
+    return {"status": "reset_complete"}
+
 @app.patch("/api/tickets/{review_id}/resolve")
 def resolve_ticket_endpoint(review_id: int, db: sqlite3.Connection = Depends(get_db)):
     resolved_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     cursor = db.cursor()
-    cursor.execute("UPDATE reviews SET ticket_status = 'Resolved', resolved_at = ? WHERE review_id = ?", (resolved_time, review_id))
+    cursor.execute("UPDATE reviews SET ticket_status = 'Resolved', resolved_at = ? WHERE review_id = ? AND ticket_status = 'Open'", (resolved_time, review_id))
     db.commit()
     
     if cursor.rowcount == 0:
-        raise HTTPException(status_code=404, detail="Ticket not found")
+        raise HTTPException(status_code=404, detail="Ticket not found or already resolved")
     return {"status": "success", "resolved_at": resolved_time}
 
 

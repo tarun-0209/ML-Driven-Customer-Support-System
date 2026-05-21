@@ -11,5 +11,8 @@ def get_db():
 
     try:
         yield connection
+    except Exception:
+        connection.rollback()
+        raise
     finally:
         connection.close()
