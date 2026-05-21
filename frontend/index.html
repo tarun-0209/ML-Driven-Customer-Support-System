@@ -24,13 +24,26 @@
 </head>
 <body class="font-sans text-gray-800 min-h-screen p-8 pb-32">
 
+<div id="startup-overlay" class="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[9999] flex flex-col items-center justify-center transition-opacity duration-500">
+    <div class="bg-white p-8 rounded-2xl shadow-2xl max-w-sm w-full text-center border border-gray-100">
+        <svg class="w-12 h-12 animate-spin text-indigo-600 mx-auto mb-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+        </svg>
+        <h2 class="text-lg font-extrabold text-gray-900 mb-2">Connecting to Backend...</h2>
+        <p class="text-sm text-gray-500 leading-relaxed mb-4">Waking up the free Render server. This usually takes 30 to 50 seconds.</p>
+        <div class="w-full bg-gray-100 rounded-full h-1.5 mb-2 overflow-hidden">
+            <div class="bg-indigo-600 h-1.5 rounded-full animate-[pulse_2s_ease-in-out_infinite] w-full origin-left"></div>
+        </div>
+        <p id="poll-status" class="text-[10px] font-bold uppercase tracking-widest text-gray-400">Initiating connection</p>
+    </div>
+</div>
+
 <div class="max-w-7xl mx-auto">
 
-    <!-- Header -->
     <header class="flex items-center justify-between mb-8 pb-4 border-b border-gray-200">
         <h1 class="text-2xl font-extrabold text-gray-900 tracking-tight">Sentiment Dashboard</h1>
         <div class="flex items-center gap-4">
-            <!-- Simulate Reviews -->
             <button id="sim-btn" onclick="startSimulation()"
                 class="flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white text-xs font-bold uppercase tracking-wide px-4 py-2 rounded-lg shadow-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed">
                 <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
@@ -51,7 +64,6 @@
         </div>
     </header>
 
-    <!-- Metrics -->
     <div class="grid grid-cols-1 md:grid-cols-4 gap-5 mb-6">
         <div class="bg-white rounded-xl border border-gray-100 shadow-sm p-6 flex flex-col items-center text-center">
             <p class="text-[10px] uppercase tracking-widest font-bold text-gray-400 mb-2">Revenue at Risk</p>
@@ -69,7 +81,6 @@
         </div>
     </div>
 
-    <!-- Action Desk -->
     <div class="bg-white rounded-xl border border-gray-100 shadow-sm">
         <div class="flex items-center justify-between px-6 py-4 border-b border-gray-100">
             <div class="flex items-center gap-3">
@@ -86,10 +97,8 @@
 
 </div>
 
-<!-- Toast -->
 <div id="toasts" class="fixed bottom-5 right-5 flex flex-col gap-2 z-[999] pointer-events-none"></div>
 
-<!-- Global Action Dropdown -->
 <div id="dropdown" class="hidden fixed w-40 bg-white rounded-lg shadow-2xl border border-gray-200 z-[9999] overflow-hidden">
     <button id="dd-giftcard" class="dd-item border-b border-gray-100">Send Giftcard</button>
     <button id="dd-convo"    class="dd-item border-b border-gray-100">Start Convo</button>
@@ -97,7 +106,9 @@
 </div>
 
 <script>
-    const API = 'http://127.0.0.1:8000/api';
+    const API = 'https://ml-driven-customer-support-system.onrender.com/api';
+    //const API = 'http://127.0.0.1:8000/api';
+    
     let allTickets = [], currentTab = 'Open', currentRevenue = 0, shiftChart = null;
 
     // ── Helpers ───────────────────────────────────────────────────────────────
@@ -319,6 +330,7 @@
                 fetch(`${API}/dashboard${q}`).then(r => r.json()),
                 fetch(`${API}/tickets${q}`).then(r => r.json())
             ]);
+            
             if (currentRevenue !== metrics.revenue_at_risk) {
                 animateCounter('revenue-amount', currentRevenue, metrics.revenue_at_risk);
                 currentRevenue = metrics.revenue_at_risk;
@@ -328,7 +340,9 @@
             updateChart(metrics.heatmap_data);
             allTickets = tickets;
             renderTickets();
-        } catch (e) { console.error(e); }
+        } catch (e) { 
+            console.error("Fetch failed.", e); 
+        }
     }
 
     async function resolveTicket(id, label) {
@@ -362,7 +376,6 @@
     async function startSimulation() {
         const btn = $('sim-btn');
         const pill = $('sim-status');
-        // Optimistic disable so the button feels instant
         btn.disabled = true;
         pill.textContent = 'Starting...';
         pill.className = 'text-xs font-semibold px-3 py-1.5 rounded-full border whitespace-nowrap bg-gray-50 text-gray-500 border-gray-200';
@@ -370,7 +383,6 @@
             const res = await fetch(`${API}/simulation/start`, { method: 'POST' });
             const data = await res.json();
             if (data.status === 'already_running') {
-                // A simulation is already running — just let the poller take over
                 fetchSimulationStatus();
             }
         } catch (e) {
@@ -403,7 +415,6 @@
                 pill.className = 'text-xs font-semibold px-3 py-1.5 rounded-full border whitespace-nowrap bg-red-50 text-red-600 border-red-200';
 
             } else {
-                // idle — if we were just running, refresh the dashboard
                 if (pill.textContent !== '✓ Ready') fetchData();
                 btn.disabled = false;
                 pill.textContent = '✓ Ready';
@@ -412,13 +423,47 @@
         } catch (e) { console.error('Status poll error:', e); }
     }
 
-    // ── Init ──────────────────────────────────────────────────────────────────
+    // ── Safe Bootup Sequence ──────────────────────────────────────────────────
 
-    loadRestaurants();
-    fetchData();
-    fetchSimulationStatus();          // Immediate check — handles mid-sim page refresh
-    setInterval(fetchData, 10000);
-    setInterval(fetchSimulationStatus, 5000);
+    let isServerAwake = false;
+
+    async function waitForServer() {
+        if (isServerAwake) return;
+
+        $('poll-status').textContent = "Pinging server...";
+        
+        try {
+            // Use AbortSignal to enforce a 5-second timeout on the fetch
+            const res = await fetch(`${API}/restaurants`, { 
+                signal: AbortSignal.timeout(5000) 
+            });
+            
+            if (res.ok) {
+                isServerAwake = true;
+                $('startup-overlay').style.opacity = '0';
+                setTimeout(() => $('startup-overlay').classList.add('hidden'), 500);
+                toast('Server is online and ready!');
+                
+                // Now that we are safe, load the real data
+                loadRestaurants();
+                fetchData();
+                fetchSimulationStatus();
+                
+                // Start background polling
+                setInterval(fetchData, 10000);
+                setInterval(fetchSimulationStatus, 5000);
+                return;
+            }
+        } catch (e) {
+            // Request timed out or failed. The server is still booting.
+            $('poll-status').textContent = "Server sleeping. Retrying in 5s...";
+            setTimeout(waitForServer, 5000); // Try again in 5 seconds
+        }
+    }
+
+    // Start the safe boot sequence immediately on load
+    waitForServer();
+
 </script>
 </body>
 </html>
