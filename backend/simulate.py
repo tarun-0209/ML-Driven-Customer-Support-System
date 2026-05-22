@@ -101,38 +101,61 @@ REVIEWS_POOL = {
     ]
 }
 
-# --- DATABASE HELPERS ---
-
-# --- SIMULATION HELPERS ---
-def generate_random_time_in_week(weeks_ago):
+# SIMULATION HELPERS
+def generate_random_time_in_week(weeks_ago: int) -> str:
+    """
+    Generates a realistic, randomized timestamp during business hours 
+    for a specific week in the past one month.
+    """
+    # Calculate the starting point of the targeted week in the past
     start_of_week = datetime.now() - timedelta(days=(weeks_ago * 7))
+    
+    # Pick a random day from 0 to 6 (Monday to Sunday) within that week
     random_days = random.randint(0, 6)
+    
+    # Pick a realistic restaurant operating hour (Lunch rush 11 AM - 2 PM, Dinner 5 PM - 11 PM)
     hour = random.choice([11, 12, 13, 14, 17, 18, 19, 20, 21, 22, 10, 23])
     minute = random.randint(0, 59)
+    
+    # Combine the base week, the random day, and the realistic hours/minutes
     past_date = start_of_week + timedelta(days=random_days)
+    
+    # Format cleanly as a standard database timestamp string (seconds set to 0)
     return past_date.replace(hour=hour, minute=minute, second=0).strftime("%Y-%m-%d %H:%M:%S")
 
-# --- CORE EXECUTION ---
+
+# MAIN EXECUTION
 def run_enterprise_seed(target_restaurants, state):
+    """
+    Generates mass historical data over a 4-week period to pre-populate 
+    the database with a realistic footprint.
+    """
     print(f"\n Seeding historical data for Restaurants: {target_restaurants}")
     
+    # Formula: Total restaurants * 4 weeks * 8 reviews per week
     total_expected = len(target_restaurants) * 4 * 8
     state["total_reviews"] = total_expected
     state["reviews_sent"] = 0
     total_sent = 0
     
-    # Using a Session makes 180 sequential API calls significantly faster
+    # A persistent Session keeps the network connection alive across loops.
+    # This speeds up hundreds of consecutive API calls by skipping individual connection setups.
     with requests.Session() as session, sqlite3.connect(DB_PATH, timeout=10) as conn:
-        # session.proxies = {"http": None, "https": None}
-        session.trust_env = False
+        session.trust_env = False  # Ignore local network proxies to avoid routing lag
         
         for rest_id in target_restaurants:
-            for weeks_ago in [4, 3, 2, 1]:
-                for _ in range(8):
-                    if state.get("stop_requested"): return
+            for weeks_ago in [4, 3, 2, 1]:      # Loop backwards through 4 weeks of history
+                for _ in range(8):              # Generate 8 reviews per week
+                    
+                    # Interruption safety valve: Exit if the main thread requests a shutdown
+                    if state.get("stop_requested"): 
+                        return
+                    
+                    # Force a narrative split: skewed negative (45%) to generate support tickets for demoing
                     sentiment_category = random.choices(["positive", "neutral", "negative"], weights=[35, 20, 45], k=1)[0]
                     review_data = random.choice(REVIEWS_POOL[sentiment_category])
                     
+                    # Construct the payload mimicking an actual user posting a review
                     payload = {
                         "restaurant_id": rest_id,
                         "review_text": review_data["text"],
@@ -147,16 +170,22 @@ def run_enterprise_seed(target_restaurants, state):
                             state["reviews_sent"] = total_sent
                             
                             data = res.json()
-                            # Optimistically resolve some of the historical tickets right away
+                            
+                            # Realism Factor: In history, many tickets would already be solved by now.
+                            # If a support ticket was generated, resolve it 75% of the time.
                             if data.get("ticket") == "Open" and random.random() < 0.75:
                                 t1 = datetime.strptime(payload["review_timestamp"], "%Y-%m-%d %H:%M:%S")
+                                
+                                # Simulate a resolution taking between 1 to 14 hours to look natural
                                 resolution_time = t1 + timedelta(hours=random.randint(1, 14), minutes=random.randint(0, 59))
+                                
                                 conn.execute(
                                     "UPDATE reviews SET ticket_status = 'Resolved', resolved_at = ? WHERE review_id = ?", 
                                     (resolution_time.strftime("%Y-%m-%d %H:%M:%S"), data["review_id"])
                                 )
                                 conn.commit()
 
+                            # Print a progress update every 30 requests to track speed in the terminal
                             if total_sent % 30 == 0:
                                 print(f"   ... Processed {total_sent}/{total_expected} reviews")
                         else:
@@ -166,54 +195,57 @@ def run_enterprise_seed(target_restaurants, state):
                     
     print("ML Ingestion Complete!")
 
-# --- COMBINED SIMULATION SERVICE ---
+
+# COMBINED SIMULATION SERVICE
 def run_combined_simulation(state):
     """
-    Backend-triggered simulation service called from main.py in a background thread.
-    Orchestrates: seeding phase -> live stream phase -> idle.
-    Accepts a mutable 'state' dict owned by main.py and updates it throughout.
+    Backend-triggered manager running inside a detached background thread.
+    Runs Phase 1 (Bulk History) and then transitions to Phase 2 (Live Streaming Traffic).
+    Accepts a shared 'state' dictionary to update the dashboard UI in real time.
     """
-    MAX_RUNTIME = 150  # 120s live stream + 30s safety buffer
+    MAX_RUNTIME = 150  # Hard deadline: 120s for stream + 30s for seeding buffer
     wall_start = time.time()
 
     try:
-        # Dynamically fetch real restaurant IDs from the DB — never assume [1, 2, 3]
+        # Dynamically fetch real restaurant IDs from the DB — never assume hardcoded IDs like [1, 2, 3]
         with sqlite3.connect(DB_PATH, timeout=10) as conn:
             rows = conn.execute("SELECT restaurant_id FROM restaurants ORDER BY restaurant_id").fetchall()
         restaurant_ids = [row[0] for row in rows]
+        
         if not restaurant_ids:
             raise RuntimeError("No restaurants found in DB. Cannot run simulation.")
         print(f" Found restaurants: {restaurant_ids}")
 
-        # Phase 1 — Historical Seed (phase already set to 'seeding' by main.py)
+        # Phase 1 — Historical Seed
         run_enterprise_seed(restaurant_ids, state)
 
-        # Phase 2 — Live Stream
+        # Phase 2 — Live Stream Simulation
         state["total_reviews"] = 12
         state["reviews_sent"] = 0
         state["phase"] = "live"
-        state["live_start_time"] = time.time()
+        state["live_start_time"] = time.time()  # Mark start point for frontend countdown timer
 
         with requests.Session() as session:
-            # session.proxies = {"http": None, "https": None}
             session.trust_env = False
             for i in range(12):
-                # Stop if requested (page refresh, new simulation, etc.)
+                # Safety checks: Break if user refreshes the page OR a new tab was opened.
                 if state.get("stop_requested"):
                     break
-                # Hard timeout: abort if total wall-clock time is exceeded
                 if time.time() - wall_start > MAX_RUNTIME:
                     break
 
+                # Pick a random restaurant and stream mostly complaints (70%) to create live action on the map
                 rest_id = random.choice(restaurant_ids)
                 category = random.choices(["negative", "neutral"], weights=[70, 30])[0]
                 review = random.choice(REVIEWS_POOL[category])
+                
                 payload = {
                     "restaurant_id": rest_id,
                     "review_text": review["text"],
                     "star_rating": review["stars"],
-                    "review_timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    "review_timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S") # Stamped right now
                 }
+                
                 try:
                     res = session.post(API_URL, json=payload)
                     if res.status_code == 200:
@@ -223,14 +255,18 @@ def run_combined_simulation(state):
                 except Exception as e:
                     print(f" Live review API error: {e}")
 
-                if i < 11:  # No sleep after the final review
+                # Interval Pacing: Wait 10 seconds before streaming the next live review.
+                # Skip sleeping on the final index (11) so the function closes down cleanly without waiting.
+                if i < 11:  
                     time.sleep(10)
 
     except Exception as e:
+        # Catch unforeseen errors, save to state so frontend UI can read the crash reason
         state["error"] = str(e)
         state["phase"] = "error"
     finally:
+        # Cleanup: Shut down simulation execution flag
         state["running"] = False
-        # Preserve 'error' phase so the UI can display it; otherwise reset to idle
+        # Preserve 'error' phase so it sticks on screen, otherwise release status to idle
         if state.get("phase") != "error":
             state["phase"] = "idle"

@@ -111,50 +111,62 @@
 </div>
 
 <script>
+    // 1. STATE & CONFIGURATION
     const API = 'https://ml-driven-customer-support-system.onrender.com/api';
-    //const API = 'http://127.0.0.1:8000/api';
     
-    let allTickets = [], currentTab = 'Open', currentRevenue = 0, shiftChart = null;
+    // Global State Variables
+    let allTickets = [];        // Stores the raw array of reviews fetched from the database
+    let currentTab = 'Open';    // Tracks whether the user is looking at 'Open' or 'Resolved' tickets
+    let currentRevenue = 0;     // Tracks the revenue number to power the smooth counting animation
+    let shiftChart = null;      // Holds the Chart.js instance so we can update it instead of redrawing it
 
-    // ── Helpers ───────────────────────────────────────────────────────────────
-
+    // A tiny helper to save us from typing document.getElementById over and over
     const $ = id => document.getElementById(id);
 
+
+    // 2. UTILITY HELPERS
     function stars(n) {
+        // Generates visual stars (e.g., 3 -> ★★★☆☆)
         return '★'.repeat(n || 0) + '☆'.repeat(5 - (n || 0));
     }
 
     function isAnomaly(t) {
+        // ML Business Logic: An anomaly is when a customer gives 4-5 stars but writes a negative review,
+        // or gives 1-2 stars but writes a positive review. This usually indicates sarcasm or ML-errors.
         return (t.star_rating >= 4 && t.predicted_sentiment !== 'positive') ||
                (t.star_rating <= 2 && t.predicted_sentiment === 'positive');
     }
 
     function qs() {
+        // Query String Builder: Checks if the user has selected a specific restaurant from the dropdown.
         const v = $('store-filter').value;
         return v !== 'all' ? `?restaurant_id=${v}` : '';
     }
 
     function formatTimestamp(ts) {
+        // Converts ugly database timestamps (2026-05-22 12:00:00) into human-friendly strings like "5m ago"
         if (!ts || ts === 'Just now') return ts || '';
         try {
-            const d = new Date(ts.replace(' ', 'T') + 'Z');
+            const d = new Date(ts.replace(' ', 'T') + 'Z'); 
             if (isNaN(d)) return ts;
-            const now = new Date();
-            const diffMs = now - d;
-            const diffMin = Math.floor(diffMs / 60000);
+            
+            const diffMin = Math.floor((new Date() - d) / 60000);
+            
             if (diffMin < 1) return 'Just now';
             if (diffMin < 60) return `${diffMin}m ago`;
-            const diffHrs = Math.floor(diffMin / 60);
-            if (diffHrs < 24) return `${diffHrs}h ago`;
+            if (diffMin < 1440) return `${Math.floor(diffMin / 60)}h ago`;
+            
             return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
         } catch (e) { return ts; }
     }
 
     function animateCounter(id, from, to, ms = 1200) {
+        // Creates a smooth rolling animation for the "Revenue at Risk" numbers
         if (from === to) return;
         const el = $(id);
         let start = null;
-        const ease = p => 1 - Math.pow(1 - p, 4);
+        const ease = p => 1 - Math.pow(1 - p, 4); 
+        
         const step = ts => {
             if (!start) start = ts;
             const p = Math.min((ts - start) / ms, 1);
@@ -165,10 +177,12 @@
     }
 
     function toast(msg) {
+        // Creates a temporary success popup in the bottom right corner
         const el = document.createElement('div');
         el.className = 'pointer-events-auto bg-gray-900 text-white text-sm font-medium px-4 py-3 rounded-xl shadow-xl border border-gray-700 flex items-center gap-3 translate-y-4 opacity-0 transition-all duration-300';
         el.innerHTML = `<span class="text-green-400">✓</span> ${msg}`;
         $('toasts').appendChild(el);
+        
         requestAnimationFrame(() => el.classList.remove('translate-y-4', 'opacity-0'));
         setTimeout(() => {
             el.classList.add('opacity-0', 'translate-x-4');
@@ -176,35 +190,47 @@
         }, 3000);
     }
 
-    // ── Dropdown ──────────────────────────────────────────────────────────────
 
+    // 3. UI INTERACTIONS & COMPONENTS
     const dd = $('dropdown');
 
     function openDropdown(btn, id) {
+        // Dynamically positions the dropdown menu right below whatever "Action" button was clicked
+        
+        // 1. Assign the correct ticket ID to the buttons inside the dropdown
         $('dd-giftcard').onclick = () => { closeDropdown(); resolveTicket(id, 'Giftcard Sent'); };
         $('dd-convo').onclick    = () => { closeDropdown(); resolveTicket(id, 'Contact Initiated'); };
         $('dd-resolve').onclick  = () => { closeDropdown(); resolveTicket(id, 'Marked Resolved'); };
+        
+        // 2. Calculate coordinates and show the menu
         const r = btn.getBoundingClientRect();
+        // Check if we are too close to the bottom of the screen; if so, flip the menu upwards
         dd.style.top  = (window.innerHeight - r.bottom < 140 ? r.top - 140 : r.bottom + 4) + 'px';
         dd.style.left = Math.max(8, r.right - 160) + 'px';
         dd.classList.remove('hidden');
     }
 
-    function closeDropdown() { dd.classList.add('hidden'); }
+    function closeDropdown() { 
+        dd.classList.add('hidden'); 
+    }
 
+    // Global listener: If the user clicks anywhere *outside* the dropdown, close it.
     document.addEventListener('click', e => {
         if (!dd.contains(e.target) && !e.target.closest('.action-btn')) closeDropdown();
     });
 
-    // ── Chart ─────────────────────────────────────────────────────────────────
-
     function updateChart(data) {
+        // Draws or updates the Chart.js Shift Bottleneck bar chart
         const ctx = $('shift-chart').getContext('2d');
+        
+        // If the chart already exists, just update the numbers to avoid flickering
         if (shiftChart) {
             shiftChart.data.datasets[0].data = Object.values(data);
             shiftChart.update();
             return;
         }
+        
+        // Otherwise, initialize the chart for the first time
         shiftChart = new Chart(ctx, {
             type: 'bar',
             data: {
@@ -222,20 +248,20 @@
         });
     }
 
-    // ── Tabs ──────────────────────────────────────────────────────────────────
-
     function setTab(tab) {
+        // Switches between 'Open' and 'Resolved' views
         currentTab = tab;
         ['Open', 'Resolved'].forEach(t => {
             $(`tab-${t}`).classList.toggle('active', t === tab);
             $(`tab-${t}`).classList.toggle('text-gray-400', t !== tab);
         });
-        renderTickets();
+        renderTickets(); // Re-draw the screen based on the newly selected tab
     }
 
-    // ── Render ────────────────────────────────────────────────────────────────
 
+    // 4. HTML RENDERING 
     function colHeader(label, count, infoTip = null) {
+        // Generates the sticky title headers for the ticket columns (e.g., "Standard Tickets [12]")
         const info = infoTip ? `
             <div class="relative group ml-1">
                 <button class="w-4 h-4 rounded-full border border-gray-400 text-gray-400 hover:border-blue-400 hover:text-blue-400 text-[9px] font-black flex items-center justify-center leading-none transition-colors">i</button>
@@ -244,6 +270,7 @@
                     ${infoTip}
                 </div>
             </div>` : '';
+            
         return `
             <div class="sticky top-0 z-10 px-5 py-3 bg-gray-100/90 backdrop-blur-sm border-b border-gray-200 flex items-center justify-between">
                 <div class="flex items-center gap-1">
@@ -255,10 +282,14 @@
     }
 
     function renderTicket(t) {
+        // Takes a single JSON ticket object and turns it into HTML markup
+        
+        // Add a bright yellow badge if our ML model flagged it as an anomaly/sarcasm
         const badge = isAnomaly(t)
             ? `<span class="text-[9px] font-black uppercase tracking-widest text-yellow-700 bg-yellow-50 border border-yellow-200 px-2 py-0.5 rounded mb-2 inline-block">Anomaly / Sarcasm Detected</span>`
             : '';
 
+        // If it's an open ticket, show the action button. If resolved, show the resolution timestamp.
         const right = currentTab === 'Open'
             ? `<button onclick="openDropdown(this,${t.review_id})" class="action-btn flex-shrink-0 ml-4 flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wide bg-white border border-gray-300 text-gray-600 hover:border-blue-400 hover:text-blue-600 hover:bg-blue-50 px-3 py-1.5 rounded-lg shadow-sm transition-all whitespace-nowrap">
                     Action <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
@@ -283,9 +314,11 @@
     }
 
     function renderTickets() {
+        // This function clears the HTML list and rebuilds it based on our 'allTickets' array.
         const el = $('ticket-list');
         closeDropdown();
 
+        // SCENARIO 1: User is looking at the 'History' tab
         if (currentTab === 'Resolved') {
             const tix = allTickets
                 .filter(t => t.ticket_status === 'Resolved')
@@ -295,13 +328,14 @@
                     return tb - ta;
                 });
             el.innerHTML = colHeader('Resolved Issues', tix.length)
-                + (tix.length
-                    ? tix.map(renderTicket).join('')
-                    : '<p class="p-10 text-center text-gray-400 text-sm">No resolved history.</p>');
+                + (tix.length ? tix.map(renderTicket).join('') : '<p class="p-10 text-center text-gray-400 text-sm">No resolved history.</p>');
             return;
         }
 
-        const open      = allTickets.filter(t => t.ticket_status === 'Open');
+        // SCENARIO 2: User is looking at the 'Open' tab
+        const open = allTickets.filter(t => t.ticket_status === 'Open');
+        
+        // Split open tickets: Anomalies vs Standard Complaints
         const anomalies = open.filter(isAnomaly)
                               .sort((a, b) => new Date(b.review_timestamp.replace(' ', 'T') + 'Z') - new Date(a.review_timestamp.replace(' ', 'T') + 'Z'));
         const standard  = open.filter(t => !isAnomaly(t))
@@ -309,9 +343,6 @@
 
         if (!open.length) {
             el.innerHTML = `<div class="flex flex-col items-center justify-center py-20 text-center">
-                <svg class="w-16 h-16 text-gray-300 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/>
-                </svg>
                 <p class="text-lg font-bold text-gray-800 mb-1">No reviews yet</p>
                 <p class="text-sm text-gray-400">Click <strong>Simulate Reviews</strong> above to start the demo.</p>
             </div>`;
@@ -333,9 +364,10 @@
             </div>`;
     }
 
-    // ── Data ──────────────────────────────────────────────────────────────────
 
+    // 5. DATA FETCHING & API LOGIC
     async function loadRestaurants() {
+        // Populates the "All Stores" dropdown at the top right of the screen
         try {
             const { restaurants } = await fetch(`${API}/restaurants`).then(r => r.json());
             const sel = $('store-filter');
@@ -350,7 +382,9 @@
 
     async function fetchData() {
         try {
-            const q = qs();
+            const q = qs(); // Get active dropdown filters
+            
+            // Promise.all fetches both API endpoints at the exact same time to make the page load faster
             const [metrics, { tickets }] = await Promise.all([
                 fetch(`${API}/dashboard${q}`).then(r => r.json()),
                 fetch(`${API}/tickets${q}`).then(r => r.json())
@@ -362,6 +396,7 @@
             }
             $('ttr-amount').textContent = metrics.avg_ttr_hours;
             $('open-badge').textContent = `${metrics.open_tickets} open`;
+            
             updateChart(metrics.heatmap_data);
             allTickets = tickets;
             renderTickets();
@@ -371,27 +406,31 @@
     }
 
     async function resolveTicket(id, label) {
+        // 1. Optimistic UI update: Animate it sliding out immediately so the user feels speed.
         const card = $(`ticket-${id}`);
         if (card) card.classList.add('ticket-exit');
+        
         setTimeout(() => {
             allTickets = allTickets.map(t =>
                 t.review_id === id ? { ...t, ticket_status: 'Resolved', resolved_at: 'Just now' } : t
             );
             renderTickets();
             toast(label);
-        }, 320);
+        }, 320); // Wait 320ms for the CSS sliding animation to finish
+        
+        // 2. Actually tell the backend database to update the ticket
         try {
             const res = await fetch(`${API}/tickets/${id}/resolve`, { method: 'PATCH' });
             if (!res.ok) throw new Error('Resolve failed');
-            fetchData();
+            fetchData(); // Sync up fully with the backend
         } catch (e) {
             console.error(e);
-            fetchData();
+            fetchData(); // If the API fails, refresh to revert the optimistic UI deletion
         }
     }
 
-    // ── Simulation ────────────────────────────────────────────────────────────
 
+    // 6. SIMULATION MANAGER
     function formatCountdown(seconds) {
         const m = Math.floor(seconds / 60).toString().padStart(2, '0');
         const s = (seconds % 60).toString().padStart(2, '0');
@@ -401,25 +440,29 @@
     async function startSimulation() {
         const btn = $('sim-btn');
         const pill = $('sim-status');
+        
+        // Lock the UI button
         btn.disabled = true;
         pill.textContent = 'Resetting...';
-        pill.className = 'text-xs font-semibold px-3 py-1.5 rounded-full border whitespace-nowrap bg-gray-50 text-gray-500 border-gray-200';
+        pill.className = 'text-xs font-semibold px-3 py-1.5 rounded-full border bg-gray-50 text-gray-500 border-gray-200';
+        
         try {
-            // Wipe old data first so we get a fresh demo
+            // Step 1: Wipe DB so visitor gets a clean demo
             await fetch(`${API}/reset`, { method: 'POST' });
-            // Refresh UI to show empty state briefly
-            await fetchData();
+            await fetchData(); 
 
+            // Step 2: Kick off Python Thread
             pill.textContent = 'Starting...';
             const res = await fetch(`${API}/simulation/start`, { method: 'POST' });
             const data = await res.json();
-            if (data.status === 'already_running') {
-                fetchSimulationStatus();
+            
+            if (data.status === 'started' || data.status === 'already_running') {
+                fetchSimulationStatus(); 
             }
         } catch (e) {
             console.error('Simulation start failed:', e);
             pill.textContent = '⚠ Simulation failed';
-            pill.className = 'text-xs font-semibold px-3 py-1.5 rounded-full border whitespace-nowrap bg-red-50 text-red-600 border-red-200';
+            pill.className = 'text-xs font-semibold px-3 py-1.5 rounded-full border bg-red-50 text-red-600 border-red-200';
             btn.disabled = false;
         }
     }
@@ -433,74 +476,72 @@
             if (data.phase === 'seeding') {
                 btn.disabled = true;
                 pill.textContent = `Seeding ${data.reviews_sent}/${data.total_reviews} reviews...`;
-                pill.className = 'text-xs font-semibold px-3 py-1.5 rounded-full border whitespace-nowrap bg-yellow-50 text-yellow-700 border-yellow-200 animate-pulse';
+                pill.className = 'text-xs font-semibold px-3 py-1.5 rounded-full border bg-yellow-50 text-yellow-700 border-yellow-200 animate-pulse';
                 fetchData();
 
             } else if (data.phase === 'live') {
                 btn.disabled = true;
                 pill.textContent = `● Simulating ${data.reviews_sent}/12 | ${formatCountdown(data.remaining_seconds)}`;
-                pill.className = 'text-xs font-semibold px-3 py-1.5 rounded-full border whitespace-nowrap bg-blue-50 text-blue-700 border-blue-200';
+                pill.className = 'text-xs font-semibold px-3 py-1.5 rounded-full border bg-blue-50 text-blue-700 border-blue-200';
                 fetchData();
 
             } else if (data.phase === 'error') {
                 btn.disabled = false;
                 pill.textContent = '⚠ Simulation failed';
-                pill.className = 'text-xs font-semibold px-3 py-1.5 rounded-full border whitespace-nowrap bg-red-50 text-red-600 border-red-200';
+                pill.className = 'text-xs font-semibold px-3 py-1.5 rounded-full border bg-red-50 text-red-600 border-red-200';
 
             } else {
-                if (pill.textContent !== '✓ Ready') fetchData();
+                if (pill.textContent !== '✓ Ready') fetchData(); 
                 btn.disabled = false;
                 pill.textContent = '✓ Ready';
-                pill.className = 'text-xs font-semibold px-3 py-1.5 rounded-full border whitespace-nowrap bg-green-50 text-green-700 border-green-200';
+                pill.className = 'text-xs font-semibold px-3 py-1.5 rounded-full border bg-green-50 text-green-700 border-green-200';
             }
         } catch (e) { console.error('Status poll error:', e); }
     }
 
-    // ── Safe Bootup Sequence ──────────────────────────────────────────────────
 
+    // 7. SERVER BOOT SEQUENCE
     let isServerAwake = false;
 
     async function waitForServer() {
+        // Repeatedly knocks on the door until the free cloud host wakes up
         if (isServerAwake) return;
 
         $('poll-status').textContent = "Pinging server...";
         
         try {
-            // Use AbortSignal to enforce a 5-second timeout on the fetch
             const res = await fetch(`${API}/restaurants`, { 
                 signal: AbortSignal.timeout(5000) 
             });
             
             if (res.ok) {
                 isServerAwake = true;
+                
+                // Hide the loading overlay smoothly
                 $('startup-overlay').style.opacity = '0';
                 setTimeout(() => $('startup-overlay').classList.add('hidden'), 500);
                 toast('Server is online and ready!');
                 
-                // Wipe old data so every page load is a fresh start
                 await fetch(`${API}/reset`, { method: 'POST' });
                 
-                // Now that we are safe, load the real data
+                // Load UI data
                 loadRestaurants();
                 fetchData();
                 fetchSimulationStatus();
-                
-                // Enable the simulate button now that server is confirmed awake
                 $('sim-btn').disabled = false;
                 
-                // Start background polling
-                setInterval(fetchData, 10000);
-                setInterval(fetchSimulationStatus, 3000);
+                // Background intervals to keep page fresh
+                setInterval(fetchData, 10000);              
+                setInterval(fetchSimulationStatus, 3000);   
                 return;
             }
         } catch (e) {
-            // Request timed out or failed. The server is still booting.
+            // The 5-second timeout tripped. Try again shortly.
             $('poll-status').textContent = "Server sleeping. Retrying in 5s...";
-            setTimeout(waitForServer, 5000); // Try again in 5 seconds
+            setTimeout(waitForServer, 5000); 
         }
     }
 
-    // Start the safe boot sequence immediately on load
     waitForServer();
 
 </script>
