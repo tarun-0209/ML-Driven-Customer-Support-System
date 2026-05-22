@@ -1,3 +1,7 @@
 __pycache__/
 *.pyc
 .env
+yelp_review_fine-grained_5_classes_csv/
+**/yelp_balanced_300k.csv
+**/yelp_preprocessed_final.csv
+
