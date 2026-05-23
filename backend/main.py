@@ -121,30 +121,65 @@ class ReviewIngest(BaseModel):
 
 
 # 6. API ENDPOINTS
-@app.post("/api/reviews")
-def ingest_review(review: ReviewIngest, db: sqlite3.Connection = Depends(get_db)):
-    vectorized_text = vectorizer.transform([clean_and_negate_pipeline(review.review_text)])
-    prediction_raw = classifier.predict(vectorized_text)[0].item()
-    confidence = float(max(classifier.predict_proba(vectorized_text)[0]))
-    
-    prediction_text = {0: 'negative', 1: 'neutral', 2: 'positive'}.get(prediction_raw, 'neutral')
-
-    # Business Logic: Open tickets for Negatives, Neutrals, and Anomalies
-    is_anomaly = (review.star_rating >= 4 and prediction_text != 'positive') or \
-                 (review.star_rating <= 2 and prediction_text == 'positive')
-                 
-    ticket_status = 'Open' if prediction_text in ['negative', 'neutral'] or is_anomaly else 'None'
-
+@app.get("/api/dashboard")
+def get_dashboard_metrics(restaurant_id: Optional[int] = None, db: sqlite3.Connection = Depends(get_db)):
+    """
+    Computes key performance indicators (KPIs) for the frontend dashboard.
+    These metrics include Revenue at Risk, Shift Bottlenecks (Heatmap Data),
+    and Average Time to Resolution (TTR).
+    """
     cursor = db.cursor()
-    try:
-        cursor.execute(
-            "INSERT INTO reviews(restaurant_id, review_text, star_rating, review_timestamp, predicted_sentiment, confidence_score, ticket_status) VALUES (?,?,?,?,?,?,?)",
-            (review.restaurant_id, review.review_text, review.star_rating, review.review_timestamp, prediction_text, confidence, ticket_status)
-        )
-        db.commit()
-        return {"status": "success", "review_id": cursor.lastrowid, "sentiment": prediction_text, "ticket": ticket_status}
-    except sqlite3.IntegrityError:
-        raise HTTPException(status_code=400, detail="Invalid restaurant_id or DB Integrity Error")
+    
+    # Base filtering logic to optionally restrict metrics to a specific restaurant
+    filter_query = " AND restaurant_id = ?" if restaurant_id else ""
+    params = (restaurant_id,) if restaurant_id else ()
+
+    # 1. Revenue at Risk Calculation
+    # Counts the total number of unresolved ('Open') tickets. 
+    # Assumes an average potential loss of $50 per negative/unresolved review.
+    cursor.execute(f"SELECT COUNT(*) FROM reviews WHERE ticket_status = 'Open'{filter_query}", params)
+    revenue_at_risk = cursor.fetchone()[0] * 50
+    
+    # 2. Shift Bottleneck (Heatmap Data) Calculation
+    # Identifies when negative reviews occur to pinpoint underperforming shifts.
+    cursor.execute(f"SELECT review_timestamp FROM reviews WHERE predicted_sentiment = 'negative'{filter_query}", params)
+    heatmap_data = {"Lunch": 0, "Dinner": 0, "Off-Hours": 0}
+    
+    for row in cursor.fetchall():
+        dt = parse_timestamp(row["review_timestamp"])
+        if not dt: 
+            continue
+            
+        # Categorize the review time into specific operational shifts
+        if 11 <= dt.hour <= 15: 
+            heatmap_data["Lunch"] += 1
+        elif 16 <= dt.hour <= 22: 
+            heatmap_data["Dinner"] += 1
+        else: 
+            heatmap_data["Off-Hours"] += 1
+
+    # 3. Average Time To Resolution (TTR) Calculation
+    # Measures how quickly the support team is closing tickets.
+    cursor.execute(f"SELECT review_timestamp, resolved_at FROM reviews WHERE ticket_status = 'Resolved' AND resolved_at IS NOT NULL{filter_query}", params)
+    total_hours, valid_resolutions = 0, 0
+    
+    for row in cursor.fetchall():
+        t1, t2 = parse_timestamp(row["review_timestamp"]), parse_timestamp(row["resolved_at"])
+        if t1 and t2:
+            # Calculate the difference in hours between when the ticket was created and resolved
+            diff_hours = (t2 - t1).total_seconds() / 3600
+            if diff_hours >= 0:
+                total_hours += diff_hours
+                valid_resolutions += 1
+
+    # Return the compiled metrics as a structured JSON object for the frontend UI
+    return {
+        "open_tickets": revenue_at_risk // 50,
+        "revenue_at_risk": revenue_at_risk,
+        "heatmap_data": heatmap_data,
+        "avg_ttr_hours": round(total_hours / valid_resolutions, 1) if valid_resolutions > 0 else 0
+    }
+
 
 @app.post("/api/reviews")
 def ingest_review(review: ReviewIngest, db: sqlite3.Connection = Depends(get_db)):
